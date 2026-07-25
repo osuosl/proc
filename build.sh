@@ -27,8 +27,8 @@ if [ $? != 0 ] ; then
  if [ -x $home/bin/arduino-cli ] ; then
   arduino_cli=$home/bin/arduino-cli
  else
-  echo 没有找到 arduino-cli
-  echo 请到https://github.com/arduino/arduino-cli/releases 下载， 并放到 /usr/local/bin目录下
+  echo arduino-cli not found
+  echo Please download it from https://github.com/arduino/arduino-cli/releases and put it in /usr/local/bin
   mkdir ~/bin -p
   wget https://github.com/arduino/arduino-cli/releases/download/v1.0.4/arduino-cli_1.0.4_Linux_64bit.tar.gz -c
   tar zxf arduino-cli_1.0.4_Linux_64bit.tar.gz -C $home/bin arduino-cli
@@ -58,16 +58,16 @@ mkdir -p /tmp/${me}_build /tmp/${me}_cache
 
 fqbn="arduino:avr:pro:cpu=8MHzatmega328"
 #fqbn="m328pb:avr:atmega328pbic:speed=8mhz"
-#开发板:Arduino AVR Boards -> Arduino Pro or Pro Mini
-#处理器:Atmega328P(3.3V,8Mhz)
+#Board:     Arduino AVR Boards -> Arduino Pro or Pro Mini
+#Processor: Atmega328P(3.3V,8Mhz)
 
-#传递宏定义 GIT_VER 到源码中，源码git版本 编译参数
+#pass the GIT_VER macro into the source: the git revision and the build settings
 CXXFLAGS="-DGIT_VER=\"$ver\" -DBUILD_SET=\"$fqbn\""
 
-#安装编译环境
+#install the build environment
 $arduino_cli core install $( echo $fqbn |awk -F: '{print $1":"$2}' )
 
-#安装硬件驱动库
+#install the hardware driver libraries
 for lib in OneWire Ethernet3
 do
  if ! [ -x $home/Arduino/libraries/$lib ] ; then
@@ -84,8 +84,8 @@ $arduino_cli compile \
 prc |tee /tmp/${me}_info.log
 sync
 if [ -e /tmp/${me}_build/prc.ino.hex ] ; then
-  grep "Global vari" /tmp/${me}_info.log |sed -n "s/^Global variables use \([0-9]*\) bytes (\([0-9]*\)%) of dynamic memory, leaving \([0-9]*\) bytes for local variables. Maximum is 2048 bytes.$/RAM:使用\2%(\1字节),剩余\3字节/p"
-  grep "^Sketch" /tmp/${me}_info.log |sed -n "s/Sketch uses \([0-9]*\) bytes (\([0-9]*\)%.*$/ROM:使用\2%(\1字节)/p"
+  grep "Global vari" /tmp/${me}_info.log |sed -n "s/^Global variables use \([0-9]*\) bytes (\([0-9]*\)%) of dynamic memory, leaving \([0-9]*\) bytes for local variables. Maximum is 2048 bytes.$/RAM: \2% used (\1 bytes), \3 bytes free/p"
+  grep "^Sketch" /tmp/${me}_info.log |sed -n "s/Sketch uses \([0-9]*\) bytes (\([0-9]*\)%.*$/ROM: \2% used (\1 bytes)/p"
   echo ver:$ver
 
   cp -a /tmp/${me}_build/prc.ino.hex ./prc.hex

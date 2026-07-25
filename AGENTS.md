@@ -15,7 +15,14 @@ The firmware that runs on shipped PROC-V1 boards. One 1350-line Arduino sketch
 plus two shell scripts. Upstream `lshw/proc`, GPL-3.0, 57 commits from
 2020-01-02 to 2024-11-03, sole author Liu Shiwei.
 
-Upstream README, translated:
+> **Fork divergence:** in this fork the in-repo Chinese has already been
+> translated in place — `README.md`, `build.sh`, and all 64 comment lines in
+> `prc/prc.ino`. Upstream is still Chinese, so **expect conflicts on those
+> files when rebasing on `upstream/main`**. The translation is one isolated
+> commit and touches comments only: the compiled image is byte-identical apart
+> from the embedded `__TIME__` literal, verified with `arduino-cli`.
+
+Upstream README (now English in this fork):
 
 > **proc** — source for proc_v1
 >

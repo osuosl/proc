@@ -1,9 +1,13 @@
 /*
-  bootloader 以 "pro mini 为基础，融丝H,L,E从FF，DA，FD 改成 C2 DA FD"，从外置晶振8Mhz，改成RC8Mhz
-  把arduino例子里的arduinoISP写到一个uno里， 然后，临时插上一个8M晶振，10->reset(update-左脚),11->MOSI,12->MISO,13-CLK,GND-GND,VCC->5Vin
-  然后编程器选 "Arduino as ISP",点"工具"->"烧录引导程序"
+  bootloader: based on "pro mini", with the fuses changed from FF,DA,FD to
+  C2,DA,FD (lfuse FF->C2), i.e. from an external 8MHz crystal to the internal
+  8MHz RC oscillator.
+  Write the ArduinoISP example sketch into an Uno, then temporarily fit an 8MHz
+  crystal and wire: 10->reset (the left pin of the "update" header), 11->MOSI,
+  12->MISO, 13-CLK, GND-GND, VCC->5Vin
+  Then select the programmer "Arduino as ISP" and click Tools -> Burn Bootloader
 
-  编译时， 需要安装OneWire库， maintainer=Paul Stoffregen
+  Building requires the OneWire library, maintainer=Paul Stoffregen
 */
 #ifndef GIT_COMMIT_ID
 #define GIT_COMMIT_ID "test"
@@ -27,9 +31,9 @@ EthernetClient client;
 #ifdef PWM
 uint8_t pwm;
 #endif
-//定时器最长65536秒 18小时
-uint16_t timer1 = 0; //秒 定时测温
-uint16_t volatile dogcount = 0; //超时重启，主程序循环清零，不清零的话100秒重启系统
+//the timer maxes out at 65536 seconds = 18 hours
+uint16_t timer1 = 0; //seconds; periodic temperature reading
+uint16_t volatile dogcount = 0; //watchdog counter, cleared by the main loop. If it is never cleared the system reboots after 100 seconds
 
 #define S_TCP  1
 #define S_SERIAL 0
@@ -126,18 +130,18 @@ enum
   WATCHDOG8,
   WATCHDOG9,
   WATCHDOG10,
-  WATCHDOG_EN, //开启watchdog功能
-  PWM_NOW, //当前PWM位置
+  WATCHDOG_EN, //enable the watchdog feature
+  PWM_NOW, //current PWM position
   ROMCRC,
-  //后面的不做校验
-  REMOTE_CYCLE, //主动外联，重试周期
-  REMOTE_PORT_H, //主动外联端口
+  //the entries below this point are not checksummed
+  REMOTE_CYCLE, //active outbound connection: retry interval
+  REMOTE_PORT_H, //active outbound connection: port
   REMOTE_PORT_L,
-  REMOTE_HOST, //主动外联ip
+  REMOTE_HOST, //active outbound connection: ip
   ROMLEN
 };
-#define SCRIPT_SIZE 50 //每个脚本的长度  ;
-#define SCRIPT_ADDR  ROMLEN+2 //起始地址
+#define SCRIPT_SIZE 50 //length of each script  ;
+#define SCRIPT_ADDR  ROMLEN+2 //start address
 
 EthernetServer server(23);
 uint8_t osc;
@@ -167,7 +171,7 @@ void setup() {
   analogWrite(PWM, pwm);
 #endif
   pinMode(_24V_OUT, OUTPUT);
-  digitalWrite(_24V_OUT, HIGH); //默认24V开启输出
+  digitalWrite(_24V_OUT, HIGH); //24V output enabled by default
   pinMode(PC_RESET, OUTPUT);
   digitalWrite(PC_RESET, LOW);
   pinMode(PC_POWER, OUTPUT);
@@ -192,7 +196,7 @@ void setup() {
   if (com_speed == 0) com_speed = 115200;
   Serial.begin(com_speed, get_comset());
   digitalWrite(_24V_OUT, eeprom_read(VOUT_SET));
-  mac[0] = 0xdc; //mac的第一位必须是偶数，否则就是广播地址
+  mac[0] = 0xdc; //the first mac octet must be even, otherwise it is a broadcast address
   mac[1] = 0xad;
   mac[2] = 0xbe;
   mac[3] = eeprom_read(MAC3);
@@ -214,7 +218,7 @@ void setup() {
     }
   }
   if (dhcp_ok == false)
-    Ethernet.begin(mac, ip, gateway, subnet); //dhcp==N 或者dhcp获取失败
+    Ethernet.begin(mac, ip, gateway, subnet); //dhcp==N, or dhcp failed
   for (uint8_t i = 0; i < 3; i++)
     clientn[i].proc = 0;
   server.begin();
@@ -247,12 +251,12 @@ bool magic() {
 }
 
 void temp() {
-  if (timer1 == 2) { //60秒测温一次
+  if (timer1 == 2) { //read the temperature once every 60 seconds
     ds1820_start();
-    timer1 = 1; //跳过2, ds1820_start只执行1次
+    timer1 = 1; //skip 2, so ds1820_start only runs once
   }
   if (timer1 == 0) {
-    timer1 = 60; //测温ok
+    timer1 = 60; //temperature read ok
     ds1820_all();
   }
 }
@@ -269,14 +273,14 @@ bool new_link() {
       && ((clientn[2].proc == 0) || (host != clientn[2].host)) ) {
     have_new = true;
   }
-  for (uint8_t i = 0 ; i < 3; i++)  { //检查3个新的连接的认证过程
+  for (uint8_t i = 0 ; i < 3; i++)  { //check the authentication progress of the 3 pending connections
     switch (clientn[i].proc) {
-      case 1: //等待输入密码
+      case 1: //waiting for the password
         while (clientn[i].host.available()) {
-          clientn[i].ms = millis() + 20000; //20秒延迟
+          clientn[i].ms = millis() + 20000; //20 second timeout
           ch = clientn[i].host.read();
           if (ch >= '0' && ch <= '9') {
-            //输入有效数字
+            //a valid digit was entered
             clientn[i].passwd = clientn[i].passwd * 10 + (ch & 0xf);
           } else if (ch == 0x8) {
             if (clientn[i].passwd != 0) {
@@ -286,11 +290,11 @@ bool new_link() {
           if (clientn[i].passwd == eeprom_read_u32(PASSWD0)) {
             if ( alreadyConnected) {
               client.println(F("\r\nnew client up, you are offline.\r\n"));
-              client.stop(); //有bye状态的老的连接，就先踢掉
+              client.stop(); //kick the old connection first if it is in the bye state
             }
             alreadyConnected = true;
             client = clientn[i].host;
-            clientn[i].proc = 0; //释放当前的连接池
+            clientn[i].proc = 0; //release this slot in the connection pool
             client.println(F("OK!"));
             clientn[i].host.flush();
             return true;
@@ -299,13 +303,13 @@ bool new_link() {
           }
         }
         if ( clientn[i].ms < millis()) {
-          //完成密码输入或超时
+          //password entry finished, or timed out
           clientn[i].proc = 2;
-          clientn[i].ms = millis() + 5000; //密码错误， 5秒惩罚
+          clientn[i].ms = millis() + 5000; //wrong password: 5 second penalty
           break;
         }
         break;
-      case 2: //认证失败等待惩罚时间到期
+      case 2: //auth failed: wait for the penalty to expire
         if (clientn[i].ms < millis()) {
           clientn[i].host.println(F("auth fail!"));
           clientn[i].proc = 0;
@@ -316,7 +320,7 @@ bool new_link() {
           clientn[i].host.read();
         break;
       default:
-        if (have_new) { //有新的连接上来
+        if (have_new) { //a new connection has arrived
           have_new = false;
           clientn[i].host = host;
           clientn[i].ms = millis() + 20000;
@@ -337,7 +341,7 @@ void loop() {
   dogcount = 0;
   new_link();
   if (alreadyConnected) {
-    if (!client.connected()) {//连接断开
+    if (!client.connected()) {//connection dropped
       client.stop();
       alreadyConnected = false;
     }
@@ -367,14 +371,14 @@ void com_shell() {
   s_clean(&client);
   client.println(F("\r\nWelcome to com, enter'+++' to quit"));
   while (1) {
-    if (new_link()) return; //切换了连接
+    if (new_link()) return; //the connection was switched
     dogcount = 0;
     if (!client.connected()) {
       client.stop();
       alreadyConnected = false;
       return;
     }
-    while (client.available() > 0) { //tcp有数据进来
+    while (client.available() > 0) { //data arriving from tcp
       ch = client.read();
       if (ch >= 0xf4) continue;
       if (ch == 0xd || ch == 0xa) {
@@ -398,52 +402,52 @@ void com_shell() {
       }
       client.write(chs, chlen);
       if (ms0 < millis() || client.available())
-        break; //最多2秒
+        break; //2 seconds maximum
     }
   }
 }
 
-//看门狗中断做定时任务 30ms 1次
+//the watchdog interrupt runs the periodic tasks, once every 30ms
 uint16_t volatile ms = 0;
-int16_t volatile pc_reset_on = 0; //按下pc_reset键的ms时长
-int16_t volatile pc_power_on = 0; //按下pc_power键的ms时长
+int16_t volatile pc_reset_on = 0; //how many ms the pc_reset key stays pressed
+int16_t volatile pc_power_on = 0; //how many ms the pc_power key stays pressed
 ISR(WDT_vect) {
   dogcount++;  //30ms
   if (dogcount > 100000 / 30) {
     OSCCAL = osc;
-    asm volatile ("  jmp 0"); //100秒看门狗超时重启
+    asm volatile ("  jmp 0"); //100 second watchdog timeout: reboot
   }
   ms += 30;
   if (ms > 1000) {
-    if (timer1 > 0) timer1--;//定时器1 测温
+    if (timer1 > 0) timer1--;//timer 1: temperature reading
     ms -= 1000;
   }
-  //处理reset键，其它程序只要修改 pc_reset_on=300，就可以按下300ms
+  //handle the reset key: other code only has to set pc_reset_on=300 to press it for 300ms
   if (pc_reset_on > 0)
   {
     pc_reset_on -= 30; //30ms
-    if (pc_reset_on > 0) { //reset开关按下
+    if (pc_reset_on > 0) { //reset switch pressed
       if (digitalRead(PC_RESET) != HIGH)
         digitalWrite(PC_RESET, HIGH);
-    } else { //reset开关松开
+    } else { //reset switch released
       if (digitalRead(PC_RESET) != LOW)
         digitalWrite(PC_RESET, LOW);
     }
   }
-  //处理reset键，其它程序只要修改 pc_power_on=300，就可以按下300ms
+  //handle the power key: other code only has to set pc_power_on=300 to press it for 300ms
   if (pc_power_on > 0) {
     pc_power_on -= 30; //30ms
-    if (pc_power_on > 0) { //power开关按下
+    if (pc_power_on > 0) { //power switch pressed
       if (digitalRead(PC_POWER) != HIGH)
         digitalWrite(PC_POWER, HIGH);
-    } else { //power开关松开
+    } else { //power switch released
       if (digitalRead(PC_POWER) != LOW)
         digitalWrite(PC_POWER, LOW);
     }
   }
 }
 
-//设置看门狗定时中断时间ii=WDTO_15MS .... WDTO_8S
+//set the watchdog interrupt interval; ii=WDTO_15MS .... WDTO_8S
 void setup_watchdog(int ii) {
   byte bb;
   if (ii > 9 ) ii = 9;
@@ -493,7 +497,7 @@ void menu( uint8_t  stype) {
     s->println(pwm);
 #endif
     s->println(F("===script 1-9===="));
-    disp_script( s, false); //从0号开始显示
+    disp_script( s, false); //display starting from number 0
     s->print(F("===set===\r\n"
                "a:reboot\r\n"
                "b:restore default set\r\n"
@@ -579,7 +583,7 @@ void menu( uint8_t  stype) {
       case 'a':
       case 'A':
         OSCCAL = osc;
-        asm volatile ("  jmp 0"); //重启
+        asm volatile ("  jmp 0"); //reboot
         break;
 #ifdef PWM
       case '.':
@@ -608,7 +612,7 @@ void ds1820_search() {
   uint8_t * addr;
   ds.reset_search();
   delay(250);
-  celsius[0] = -400 * 16; //跳过0号
+  celsius[0] = -400 * 16; //skip number 0
   memset(ds_addr, 0, sizeof(ds_addr));
   for (i = 0; i < 8; i++) ds_addr[0][i] = eeprom_read(SN0 + i);
   i = 1;
@@ -630,8 +634,8 @@ void ds1820_search() {
         && ds_addr[i][6] == ds_addr[0][6]
         && ds_addr[i][7] == ds_addr[0][7]
        ) {
-      celsius[0] = 0; //存在0号温度探头 ,取消跳过
-      continue; //跳过0号探头
+      celsius[0] = 0; //probe number 0 exists, so stop skipping it
+      continue; //skip probe number 0
     }    else {
       i++;
     }
@@ -718,18 +722,18 @@ void check_rom() {
   sets[MAC1] = 0xAD;
   sets[MAC2] = 0xBE;
   addr = &sets[SN0];
-  if (ds1820_count == 1 && ds_addr[1][0] != 0) //只有一个1820,并且有效，复制1820的sn到sn
+  if (ds1820_count == 1 && ds_addr[1][0] != 0) //exactly one valid 1820: copy the 1820 rom code into sn
     for (i = 0; i < 8; i++) {
       addr[i] = ds_addr[1][i];
     }
-  if (OneWire::crc8(addr, 7) !=  (uint8_t)addr[7])  {//SN不对
-    if (OneWire::crc8(ds_addr[0], 7) == ds_addr[0][7]) {//但当前SN有效
+  if (OneWire::crc8(addr, 7) !=  (uint8_t)addr[7])  {//SN is wrong
+    if (OneWire::crc8(ds_addr[0], 7) == ds_addr[0][7]) {//but the current SN is valid
       for (i = 0; i < 8; i++) {
-        addr[i] = ds_addr[0][i]; //复制当前SN
+        addr[i] = ds_addr[0][i]; //copy the current SN
       }
     } else {
       sets[MAC5] = 1;
-      sets[MAC2] = 0;//SN都不对，先用DE:AD:00:xx:xx:xx,下次再试一下
+      sets[MAC2] = 0;//no SN is valid: use DE:AD:00:xx:xx:xx for now and try again next boot
     }
   }
   sets[NAME0] = 'P';
@@ -784,13 +788,13 @@ void check_rom() {
   sets[WATCHDOG4] = 'P';
   sets[WATCHDOG5] = 'V';
   sets[WATCHDOG6] = 0xff;
-  sets[REMOTE_HOST] = 0; //主动外联服务器地址，默认为空
+  sets[REMOTE_HOST] = 0; //active outbound server address, empty by default
   sets[REMOTE_CYCLE] = 0;
   sets[REMOTE_PORT_H] = 1234 / 0x100;
   sets[REMOTE_PORT_L] = 1234 % 0x100;
   sets[PWM_NOW] = 128;
   for (i = 0; i < 10; i++)
-    eeprom_write(SCRIPT_ADDR + SCRIPT_SIZE * i, 0); //清开机脚本
+    eeprom_write(SCRIPT_ADDR + SCRIPT_SIZE * i, 0); //clear the startup scripts
   for (i = 0; i < sizeof(sets); i++) eeprom_write(i, sets[i]);
 }
 void set_passwd(Stream *s) {
@@ -821,7 +825,7 @@ void set_passwd(Stream *s) {
   eeprom_write_u32(PASSWD0, passwd);
 }
 
-//校准rc振荡器
+//calibrate the rc oscillator
 void rc_calibration() {
   uint8_t osc1, osc0 = OSCCAL;
   uint8_t oscs[256];
@@ -1192,7 +1196,7 @@ void disp_name(Stream * s) {
   }
 }
 
-//通过console 输入字符串，保存到eeprom的 addr0- addr1
+//read a string from the console and save it into eeprom addr0 - addr1
 void eeprom_set_str(Stream * s, uint16_t addr0, uint16_t addr1) {
   uint32_t ms0;
   uint8_t ch;
@@ -1239,7 +1243,7 @@ void run_script( Stream * s, uint8_t script_n) {
       case 'P':
         if (next_is_number(eeprom_addr)) {
           eeprom_addr++;
-          pc_power_on = get_uint16(eeprom_addr); //addr要被更新
+          pc_power_on = get_uint16(eeprom_addr); //addr gets updated
           s->print(pc_power_on);
         } else {
           if (ch == 'P')
@@ -1252,7 +1256,7 @@ void run_script( Stream * s, uint8_t script_n) {
       case 'R':
         if (next_is_number(eeprom_addr)) {
           eeprom_addr++;
-          pc_reset_on = get_uint16(eeprom_addr); //i要被更新
+          pc_reset_on = get_uint16(eeprom_addr); //i gets updated
           s->print(pc_reset_on);
         } else {
           if (ch == 'R')
@@ -1316,7 +1320,7 @@ void modi_script( Stream * s) {
   delay(100);
   s_clean(s);
   s->println();
-  disp_script( s, true); //从0号开始显示
+  disp_script( s, true); //display starting from number 0
   while (!s->available())  dogcount = 0;
   ch = getc_(s);
   s->write(ch);
