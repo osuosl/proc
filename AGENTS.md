@@ -392,6 +392,7 @@ reproduced with `arduino-cli`.
 
 | # | Severity | Issue |
 |---|---|---|
+| 0 | **Critical — FIXED on this branch** | **The telnet server goes permanently deaf after abandoned sessions.** `new_link()` returned at line 269 whenever `server.available()` yielded no client — but Ethernet3's `EthernetServer::available()` only returns a socket that has **unread bytes waiting** (`EthernetServer.cpp:60`), and the pending-slot timeout handling lives *inside* the loop after that return. So three abandoned sessions (closed terminal, dropped tunnel) left all three `clientn[]` slots stuck in `proc == 1` with nothing ever reclaiming them, and every later connection was accepted by the W5500 but never given a slot: TCP connects, no `passwd:` prompt, silence until the client gives up. Contributing factors: `clientn[i].ms < millis()` breaks across the ~49-day rollover, and the W5500 accepts up to 7 connections while the firmware tracks 4, with no keepalive configured (`Sn_KPALVTR` is never written) so stale sockets survive indefinitely — a link flap does **not** clear them. See §5.1 |
 | 1 | **High** | **PWM builds do not compile.** `uint8_t pwm;` (line 28, inside `#ifdef PWM`) and `uint8_t pwm = 128;` (line 461) are both namespace-scope definitions. **Verified by build:** `-DPWM=5` fails with `error: redefinition of 'uint8_t pwm'`. Dead since the 2024 cleanup |
 | 2 | **High** | **Renaming the device presses the PC's reset button.** `case 'n'`/`'N'` (lines 532–535) has no `break` and falls into `case 'r'` (line 536), which sets `pc_reset_on = 300` |
 | 3 | Medium | **Menu advertises `V` but only `v` works.** Menu prints `"V:Vout= "` (line 488); the only handler is `case 'v'` (line 548). The `case 'V'` at line 1266 is in `run_script()`, not the menu |
@@ -407,6 +408,46 @@ reproduced with `arduino-cli`.
 | 13 | Low | **`../prc/README.md` claims 32 temperature probes; this firmware supports 10.** `celsius[11]` / `ds_addr[11][8]` with slot 0 reserved for the identity probe (lines 24, 58) |
 | 14 | **Constraint** | **~1.6 KB of flash left** (29062/30720). RAM: 694 B globals plus a 512 B stack buffer in `com_shell()` (line 362) and a 256 B `oscs[]` in `rc_calibration()` (line 827) that is written but never read — 256 free bytes right there. `ds1820_disp()` pulls in floating-point `print`; fixed-point would free noticeably more |
 | 15 | Low | **MAC OUI `DC:AD:BE` has the locally-administered bit clear**, claiming a globally-unique OUI the project does not own. `DE:AD:BE` would be correct. Commit `ca4f739` shows the author was aware of the OUI bit |
+
+### 5.1 The `new_link()` deafness fix
+
+Four changes, all in `new_link()`, costing **48 bytes** of flash (29062 → 29110,
+still 94%, 1610 free) and no RAM:
+
+1. **Removed the early return**, folding `host.connected()` into the `have_new`
+   condition, so the pending-slot state machine runs on every call rather than
+   only when some socket happens to hold data. This is the actual bug.
+2. **Reclaim a slot the moment its peer disconnects**, instead of waiting out
+   the 20 s timeout. `EthernetClient::connected()` stays true in `CLOSE_WAIT`
+   while bytes remain, so a password typed just before the FIN is still read.
+3. **Rollover-safe deadlines** via `ms_expired()`, comparing the signed
+   difference. The `clientn[i].ms = 0` sentinel became `millis() - 1`, since
+   `0` is not "already expired" under signed-delta arithmetic.
+4. **Refuse connections when every slot is busy** (`busy`, then `stop()`)
+   instead of leaving them accepted but unread. `server.available()` always
+   returns the *lowest* socket holding data, so one unread orphan masks every
+   later connection.
+
+Walking the original failure through the patched code: a closed terminal puts
+the socket in `CLOSE_WAIT` with no data, `server.available()` returns nothing,
+`host` is invalid and `have_new` is false — but the loop now still runs, case 1
+sees `!connected()` and frees the slot on the very next iteration.
+
+Operational notes for anyone debugging a wedged unit before this is deployed:
+
+- **Bouncing the switch port does not help.** No keepalive is configured, and
+  nothing in the sketch monitors PHY link state or re-inits the chip after
+  `setup()`, so stale sockets survive a link flap unchanged.
+- **The serial escape still works** — it runs through `magic()` in `loop()`,
+  independent of the TCP path — *provided* `alreadyConnected` is false, since
+  `menu(S_SERIAL)` is gated on it.
+- **Prefer the menu's `a` reboot over S1 or a power cycle.** `a` is `jmp 0`,
+  which does not reset the I/O registers, so PD3 holds its state and VOUT stays
+  up. A real reset drops VOUT for about a second (R17 pulls Q1's gate down,
+  R7 pulls the P-FET gates to VIN), which power-cycles anything fed from it.
+- `EthernetClient::stop()` blocks for up to 1 s waiting for the socket to close,
+  so each reclaim can stall the loop that long. Far below the 100 s watchdog,
+  and it happens once per disconnect.
 
 ### Suggested order of work
 

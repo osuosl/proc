@@ -261,13 +261,23 @@ void temp() {
   }
 }
 
+//true once a millis() deadline has passed. Comparing the deadline against
+//millis() directly breaks across the ~49 day rollover and can leave a slot
+//pending for weeks; comparing the signed difference does not.
+bool ms_expired(uint32_t deadline) {
+  return (int32_t)(millis() - deadline) >= 0;
+}
+
 bool new_link() {
   char ch;
   EthernetClient host;
   bool have_new = false;
+  //server.available() only returns a socket that has unread bytes waiting, so
+  //host is often an invalid client. Do not return early on that: the timeout
+  //handling below has to run on every call, otherwise a pending slot whose
+  //peer stopped sending is never reclaimed and the server goes deaf.
   host = server.available();
-  if (!host.connected()) return false;
-  if (host && (host != client)
+  if (host.connected() && (host != client)
       && ((clientn[0].proc == 0) || (host != clientn[0].host))
       && ((clientn[1].proc == 0) || (host != clientn[1].host))
       && ((clientn[2].proc == 0) || (host != clientn[2].host)) ) {
@@ -276,6 +286,14 @@ bool new_link() {
   for (uint8_t i = 0 ; i < 3; i++)  { //check the authentication progress of the 3 pending connections
     switch (clientn[i].proc) {
       case 1: //waiting for the password
+        //peer disconnected (a closed terminal, a dropped tunnel): reclaim the
+        //slot now instead of holding it for the full timeout. connected() stays
+        //true in CLOSE_WAIT while bytes remain, so nothing typed is lost.
+        if (!clientn[i].host.connected()) {
+          clientn[i].proc = 0;
+          clientn[i].host.stop();
+          break;
+        }
         while (clientn[i].host.available()) {
           clientn[i].ms = millis() + 20000; //20 second timeout
           ch = clientn[i].host.read();
@@ -299,10 +317,10 @@ bool new_link() {
             clientn[i].host.flush();
             return true;
           } else if (ch == 0xd || ch == 0xa ) {
-            clientn[i].ms = 0;
+            clientn[i].ms = millis() - 1; //expire immediately
           }
         }
-        if ( clientn[i].ms < millis()) {
+        if (ms_expired(clientn[i].ms)) {
           //password entry finished, or timed out
           clientn[i].proc = 2;
           clientn[i].ms = millis() + 5000; //wrong password: 5 second penalty
@@ -310,7 +328,7 @@ bool new_link() {
         }
         break;
       case 2: //auth failed: wait for the penalty to expire
-        if (clientn[i].ms < millis()) {
+        if (ms_expired(clientn[i].ms)) {
           clientn[i].host.println(F("auth fail!"));
           clientn[i].proc = 0;
           clientn[i].host.stop();
@@ -333,6 +351,14 @@ bool new_link() {
           break;
         }
     }
+  }
+  //every slot was busy. Refuse the connection instead of leaving it accepted
+  //but unread: server.available() always returns the lowest socket holding
+  //data, so an unread orphan masks every later connection.
+  if (have_new) {
+    host.println(F("busy"));
+    host.flush();
+    host.stop();
   }
   return false;
 }
