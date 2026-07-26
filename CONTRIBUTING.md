@@ -1,5 +1,37 @@
 # Contributing
 
+## Commit messages
+
+We use [Conventional Commits](https://www.conventionalcommits.org/), because
+[release-please](https://github.com/googleapis/release-please) derives the
+version bump and the changelog from them.
+
+```
+fix: reclaim auth slots when a peer disconnects
+
+Longer explanation of why, what breaks without it, and what you tested.
+
+Refs: #14
+Signed-off-by: Your Name <you@example.org>
+```
+
+| Type | Use for | Bumps |
+|---|---|---|
+| `feat` | new capability | minor |
+| `fix` | a defect | patch |
+| `perf` | flash or RAM savings, speedups | patch |
+| `docs`, `build`, `ci`, `refactor`, `test`, `chore` | everything else | none |
+
+Breaking changes get a `!` (`feat!: ...`) or a `BREAKING CHANGE:` footer. For
+this firmware "breaking" means something an operator would be caught out by —
+an EEPROM layout change that discards settings, a changed default, a renamed
+menu key, or a MAC address change.
+
+**⚠ PRs are squash-merged, so the PR *title* becomes the commit on `main`.**
+That title is what release-please parses, so it has to be conventional too. CI
+checks it. An unconventional title doesn't fail loudly at release time — the
+change just silently vanishes from the changelog.
+
 ## Sign off every commit
 
 ```bash
@@ -9,6 +41,28 @@ git commit -s
 Every commit needs a `Signed-off-by:` trailer (the
 [DCO](https://developercertificate.org/)). PRs without it will be asked to
 amend. `-s` generates it from your git identity; don't write the line by hand.
+
+## Releases
+
+Merging to `main` makes release-please open (or update) a release PR that bumps
+`version.txt` and `CHANGELOG.md`. **Merging that PR is the release**: it tags
+`vX.Y.Z`, publishes the GitHub Release, and triggers the build that attaches
+`.hex`, `.elf`, `SHA256SUMS` and `toolchain.txt`.
+
+To force a specific version, put `Release-As: 1.0.0` in a commit footer.
+
+The version is compiled into the image and shown in the telnet banner as
+`#Ver:PROC-V1-X.Y.Z-g<sha>`, so a banner read off a deployed board always maps to
+an exact commit. Never hand-edit [CHANGELOG.md](CHANGELOG.md) or `version.txt`;
+release-please owns both.
+
+Two things to know:
+
+- Release PRs are created with `GITHUB_TOKEN`, so **CI does not run on them.**
+  That is a GitHub restriction, not a misconfiguration. The content is generated
+  from commits that already passed CI on `main`.
+- **Nothing is hardware-tested by CI.** A green release means it compiles and
+  fits. Flash a spare board before rolling a release out to a fleet.
 
 ## ⚠ Check the base repo on every PR
 
@@ -78,6 +132,8 @@ retranslates his comments is unlikely to be merged, and rightly so.
 | Size delta report | no | posted on the PR; watch it, headroom is ~1.6 KB |
 | Compiler warnings | no | reported only — there are ~28 already; don't add more |
 | `astyle` formatting | yes | run `tools/format.sh` before pushing |
+| Conventional PR title | yes | it becomes the squash commit release-please reads |
+| Relative markdown links resolve | yes | cross-repo links must be absolute URLs |
 
 Before pushing:
 
@@ -99,12 +155,3 @@ tools/format.sh     # astyle, using upstream's config
 - **Say what you tested.** "Builds and fits" and "tested on hardware" are very
   different claims. Put whichever is true in the commit message — several
   existing commits say "not yet tested on hardware" for exactly this reason.
-
-## Releases
-
-Tag `vX.Y.Z` on `main`. The release workflow builds both variants, enforces the
-size gate, and attaches `.hex`, `.elf`, `SHA256SUMS` and `toolchain.txt`.
-
-The version is compiled into the image and shown in the telnet banner as
-`#Ver:PROC-V1-X.Y.Z-g<sha>`, so a banner read off a deployed board always maps to
-an exact commit. Update [CHANGELOG.md](CHANGELOG.md) in the same PR as the tag.
