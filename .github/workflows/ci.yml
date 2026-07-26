@@ -164,10 +164,9 @@ jobs:
   format:
     name: astyle
     runs-on: ubuntu-latest
-    # Advisory for now. The tree is clean under astyle 3.1 with tools/formatter.conf,
-    # but the runner image ships a newer astyle whose defaults differ slightly. Flip
-    # this to a blocking check once a run confirms the runner produces no diff.
-    continue-on-error: true
+    # Blocking. Confirmed on run 30223491125 that the runner's astyle produces no
+    # diff against a tree formatted with astyle 3.1 and tools/formatter.conf, so
+    # this cannot fail spuriously on a version difference alone.
     steps:
       - uses: actions/checkout@v7
 

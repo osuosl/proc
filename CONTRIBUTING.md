@@ -77,7 +77,7 @@ retranslates his comments is unlikely to be merged, and rightly so.
 | Flash headroom ≥ 512 bytes free | yes | avr-gcc enforces the hard 30720 ceiling itself |
 | Size delta report | no | posted on the PR; watch it, headroom is ~1.6 KB |
 | Compiler warnings | no | reported only — there are ~28 already; don't add more |
-| `astyle` formatting | not yet | advisory until a run confirms the runner's astyle matches ours |
+| `astyle` formatting | yes | run `tools/format.sh` before pushing |
 
 Before pushing:
 
