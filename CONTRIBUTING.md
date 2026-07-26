@@ -27,10 +27,14 @@ this firmware "breaking" means something an operator would be caught out by —
 an EEPROM layout change that discards settings, a changed default, a renamed
 menu key, or a MAC address change.
 
-**⚠ PRs are squash-merged, so the PR *title* becomes the commit on `main`.**
-That title is what release-please parses, so it has to be conventional too. CI
-checks it. An unconventional title doesn't fail loudly at release time — the
-change just silently vanishes from the changelog.
+**⚠ We do not squash-merge.** Every commit you write lands on `main` intact,
+which means **every commit** is parsed by release-please and shows up in the
+changelog on its own. Write them accordingly: one logical change each, with a
+subject that reads well in a release note.
+
+CI checks every commit in a PR for both a conventional subject and a
+`Signed-off-by` trailer. A non-conventional subject doesn't fail at release
+time — the change just silently never appears in the changelog.
 
 ## Sign off every commit
 
@@ -63,6 +67,17 @@ Two things to know:
   from commits that already passed CI on `main`.
 - **Nothing is hardware-tested by CI.** A green release means it compiles and
   fits. Flash a spare board before rolling a release out to a fleet.
+
+## Merging
+
+**Merge commit or rebase — never squash.** Squashing collapses a branch into one
+commit, which would reduce a PR's worth of distinct fixes to a single changelog
+line and lose the individual sign-offs. Squash merging is disabled on the
+repository for that reason.
+
+Keep the branch tidy before it merges, since nothing will tidy it afterwards:
+fold up "fix typo" commits with `git rebase -i`, and make sure each surviving
+commit is one logical change.
 
 ## ⚠ Check the base repo on every PR
 
@@ -132,7 +147,7 @@ retranslates his comments is unlikely to be merged, and rightly so.
 | Size delta report | no | posted on the PR; watch it, headroom is ~1.6 KB |
 | Compiler warnings | no | reported only — there are ~28 already; don't add more |
 | `astyle` formatting | yes | run `tools/format.sh` before pushing |
-| Conventional PR title | yes | it becomes the squash commit release-please reads |
+| Conventional subject + sign-off, every commit | yes | commits land on `main` intact and drive the changelog |
 | Relative markdown links resolve | yes | cross-repo links must be absolute URLs |
 
 Before pushing:
