@@ -8,7 +8,7 @@
 > Translated 2026-07-25. Editorial notes added by the translator are marked
 > **[Note]** and are not part of the original.
 
-**Companion page:** [Hardware installation manual](../../prc/doc/node-914-hardware-manual.md)
+**Companion page:** [Hardware installation manual](https://github.com/osuosl/prc/blob/main/doc/node-914-hardware-manual.md)
 (original: https://bjlx.org.cn/node/914)
 
 > ⚠ **This page documents the firmware as of 2020.** Several details no longer
@@ -209,7 +209,7 @@ Each script can be at most **50 characters**. The command format is:
 
 **[Note]** The zip contains `prcv1.hex`, `prcv1_pwm.hex` and
 `prcv1_pwm_autolink.hex`, all reporting `PROC-V1-20200523-d58845a`. That commit
-is not in the public [`prc`](../../prc) repository. All three are near-full
+is not in the public [`prc`](https://github.com/osuosl/prc) repository. All three are near-full
 flash images; `prcv1_pwm_autolink.hex` reaches 31406 bytes, which **exceeds the
 30720 bytes left by the 2 KB bootloader current builds assume** — check a
 board's fuses before flashing that image onto it. See

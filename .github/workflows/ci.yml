@@ -133,6 +133,34 @@ jobs:
           path: dist
           if-no-files-found: error
 
+  links:
+    name: docs links
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Cross-repo links must be absolute URLs. A relative "../prc/..." resolves
+      # only in a workspace where both repos are siblings, and silently breaks
+      # for anyone who clones this repo on its own.
+      - name: Check relative links in markdown resolve
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, sys
+          bad = 0
+          for md in sorted(pathlib.Path('.').rglob('*.md')):
+              if '.git' in md.parts:
+                  continue
+              for m in re.finditer(r'\[([^\]]*)\]\(([^)\s]+)\)', md.read_text(encoding='utf-8')):
+                  target = m.group(2)
+                  if target.startswith(('http://', 'https://', '#', 'mailto:')):
+                      continue
+                  if not (md.parent / target.split('#')[0]).exists():
+                      print(f"BROKEN  {md}: [{m.group(1)}]({target})")
+                      bad += 1
+          print(f"\n{bad} broken relative link(s)")
+          sys.exit(1 if bad else 0)
+          PY
+
   format:
     name: astyle
     runs-on: ubuntu-latest

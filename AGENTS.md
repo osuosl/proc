@@ -2,7 +2,7 @@
 
 **This is the repository to change if the task is "improve the PROC software".**
 
-Workspace overview: [../AGENTS.md](../AGENTS.md) · Hardware: [../prc/AGENTS.md](../prc/AGENTS.md)
+Hardware reference: [osuosl/prc](https://github.com/osuosl/prc/blob/main/AGENTS.md)
 
 **Last verified:** 2026-07-25 against `a8f458f` (2024-11-03), including an actual
 `arduino-cli` build.
@@ -167,7 +167,7 @@ Everything else the build needs (`avr-gcc`, `avrdude`, `astyle`) is installed.
 - **FQBN `arduino:avr:pro:cpu=8MHzatmega328`** — "Arduino Pro or Pro Mini,
   ATmega328P 3.3 V 8 MHz". The board carries a **328PB**, but nothing here
   touches PB-only peripherals, so the stock 328P core is used. The alternative
-  `m328pb:avr:atmega328pbic` (from [../ATmega328PB](../ATmega328PB/AGENTS.md))
+  `m328pb:avr:atmega328pbic` (from [lshw/ATmega328PB](https://github.com/lshw/ATmega328PB))
   is commented out in `build.sh` and is not what ships.
 - **Libraries: `OneWire`** (Paul Stoffregen) and **`Ethernet3`** (W5500). The
   prototype in `../prc` used `Ethernet2` — do not confuse them.
@@ -214,7 +214,7 @@ The bootloader window is short, so `update.sh` counts down 3-2-1 and you apply
 power to the board as it reaches 1. If it fails, retry with different timing.
 
 For this to work the **CONN3 "Update" jumper must be closed** so the adapter's
-RTS/DTR can pull the MCU's `/RESET` — see [../prc/AGENTS.md](../prc/AGENTS.md)
+RTS/DTR can pull the MCU's `/RESET` — see [osuosl/prc AGENTS.md](https://github.com/osuosl/prc/blob/main/AGENTS.md)
 §6.4. Leave it open in normal service so the managed PC cannot reset the
 controller.
 
@@ -489,7 +489,7 @@ Operational notes for anyone debugging a wedged unit before this is deployed:
   lines you actually touch.
 - **Check the flash number on every build.** Over 30720 bytes will not fit.
 - **Do not change pin defines** without changing the hardware — the mapping is
-  fixed by the PCB. See [../prc/AGENTS.md](../prc/AGENTS.md) §6.2.
+  fixed by the PCB. See [osuosl/prc AGENTS.md](https://github.com/osuosl/prc/blob/main/AGENTS.md) §6.2.
 - **Write commit messages in English** in an OSL fork; add a Chinese subject
   line if you intend to send the patch upstream.
 - Upstream releases by tagging `YYYYMMDD-<short-sha>`; the newest tag is not
