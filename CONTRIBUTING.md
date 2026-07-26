@@ -138,6 +138,31 @@ gh pr create --repo lshw/proc --base main
 Send the **behaviour change alone**, without the translation — a patch that also
 retranslates his comments is unlikely to be merged, and rightly so.
 
+## Dependency updates
+
+Dependabot opens a **single grouped PR** for GitHub Actions, weekly on Monday.
+One PR for all actions rather than one per action; if a major bump breaks
+something, CI says so on that PR.
+
+Its commits are prefixed `ci(deps):` so they satisfy the conventional-commit
+check, and bot authors are exempt from the sign-off requirement because
+Dependabot has no DCO option. They are *not* exempt from the format check — if
+that prefix is ever removed from `.github/dependabot.yml`, CI will catch it.
+
+**⚠ The Arduino pins are not covered.** There is no Dependabot ecosystem for
+`arduino-cli`, so these, in `.github/workflows/*.yml`, have to be reviewed by
+hand:
+
+| Pin | Current |
+|---|---|
+| `PLATFORM_VERSION` (`arduino:avr`) | 1.8.8 |
+| `ONEWIRE_VERSION` | 2.3.8 |
+| `ETHERNET3_VERSION` | 1.6.0 |
+
+That is deliberate. This firmware sits at ~95% of a 30720 byte flash, so a core
+or library bump can push it over the ceiling, change generated code, or alter
+timing. Bump one at a time, on its own PR, and read the size delta CI posts.
+
 ## What CI enforces
 
 | Check | Blocking | Notes |
