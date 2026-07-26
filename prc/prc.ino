@@ -29,7 +29,10 @@ int16_t celsius[11];
 boolean alreadyConnected = false;
 EthernetClient client;
 #ifdef PWM
-uint8_t pwm;
+//the single definition of the PWM duty. It has to live up here because setup()
+//uses it, and the .ino preprocessor only hoists function prototypes, not
+//variable declarations. Defining it a second time further down is a hard error.
+uint8_t pwm = 128;
 #endif
 //the timer maxes out at 65536 seconds = 18 hours
 uint16_t timer1 = 0; //seconds; periodic temperature reading
@@ -487,8 +490,6 @@ void setup_watchdog(int ii) {
   WDTCSR = bb;
   WDTCSR |= _BV(WDIE);
 }
-uint8_t vout;
-uint8_t pwm = 128;
 void menu( uint8_t  stype) {
   uint32_t passwd, password;
   uint8_t ch;
