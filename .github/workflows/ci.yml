@@ -1,0 +1,156 @@
+name: CI
+
+on:
+  push:
+    branches: [main, osl-docs]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Pinned deliberately. This firmware fills 95% of a 30720 byte flash, so a
+# toolchain or library bump can push it over the edge; we want that to be a
+# reviewed change, not a surprise on an unrelated PR.
+env:
+  FQBN: arduino:avr:pro:cpu=8MHzatmega328
+  PLATFORM_VERSION: 1.8.8
+  ONEWIRE_VERSION: 2.3.8
+  ETHERNET3_VERSION: 1.6.0
+  # Fail the build if fewer than this many bytes of flash are left. The hard
+  # ceiling is enforced by avr-gcc itself; this is the early warning.
+  MIN_FREE_FLASH: 512
+
+jobs:
+  compile:
+    name: compile (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: stock
+            flags: ""
+          - name: pwm
+            flags: "-DPWM=5"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # build.sh derives GIT_VER from the git log, and the size-delta report
+          # needs the base ref. Neither works on a shallow clone.
+          fetch-depth: 0
+
+      - name: Derive version string
+        id: ver
+        run: |
+          echo "ver=$(git log -1 --date=short --format=%ad | tr -d -)-$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: arduino/compile-sketches@v1.1.3
+        with:
+          fqbn: ${{ env.FQBN }}
+          platforms: |
+            - name: arduino:avr
+              version: ${{ env.PLATFORM_VERSION }}
+          libraries: |
+            - name: OneWire
+              version: ${{ env.ONEWIRE_VERSION }}
+            - name: Ethernet3
+              version: ${{ env.ETHERNET3_VERSION }}
+          sketch-paths: |
+            - ./prc
+          cli-compile-flags: |
+            - --build-property
+            - build.extra_flags=${{ matrix.flags }} -DGIT_VER="${{ steps.ver.outputs.ver }}" -DBUILD_SET="${{ env.FQBN }}"
+          enable-deltas-report: true
+          enable-warnings-report: true
+          sketches-report-path: sketches-reports
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sketches-report-${{ matrix.name }}
+          path: sketches-reports
+          if-no-files-found: error
+
+  headroom:
+    name: flash headroom + artifact
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: arduino/setup-arduino-cli@v2.0.0
+
+      - name: Install pinned toolchain
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install "arduino:avr@${PLATFORM_VERSION}"
+          arduino-cli lib install "OneWire@${ONEWIRE_VERSION}"
+          arduino-cli lib install "Ethernet3@${ETHERNET3_VERSION}"
+
+      - name: Build
+        id: build
+        run: |
+          VER="$(git log -1 --date=short --format=%ad | tr -d -)-$(git rev-parse --short=7 HEAD)"
+          echo "ver=${VER}" >> "$GITHUB_OUTPUT"
+          arduino-cli compile \
+            --fqbn "${FQBN}" \
+            --build-property "build.extra_flags=-DGIT_VER=\"${VER}\" -DBUILD_SET=\"${FQBN}\"" \
+            --output-dir dist \
+            prc 2>&1 | tee build.log
+
+      - name: Check flash headroom
+        run: |
+          # "Sketch uses 29068 bytes (94%) of program storage space. Maximum is 30720 bytes."
+          read -r USED MAX < <(
+            sed -n 's/^Sketch uses \([0-9]*\) bytes .*Maximum is \([0-9]*\) bytes\.$/\1 \2/p' build.log
+          )
+          if [ -z "${USED}" ]; then
+            echo "::error::could not parse the size line out of build.log"
+            exit 1
+          fi
+          FREE=$(( MAX - USED ))
+          echo "flash: ${USED} / ${MAX} used, ${FREE} free (threshold ${MIN_FREE_FLASH})"
+          {
+            echo "### Flash usage"
+            echo ""
+            echo "| used | max | free |"
+            echo "|---:|---:|---:|"
+            echo "| ${USED} | ${MAX} | **${FREE}** |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${FREE}" -lt "${MIN_FREE_FLASH}" ]; then
+            echo "::error::only ${FREE} bytes of flash left, below the ${MIN_FREE_FLASH} byte threshold"
+            exit 1
+          fi
+
+      - name: Name the artifact after the build
+        run: |
+          mv dist/prc.ino.hex "dist/proc-v1-${{ steps.build.outputs.ver }}.hex"
+          rm -f dist/prc.ino.with_bootloader.hex
+          sha256sum dist/*.hex > dist/SHA256SUMS
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: firmware-${{ steps.build.outputs.ver }}
+          path: dist
+          if-no-files-found: error
+
+  format:
+    name: astyle
+    runs-on: ubuntu-latest
+    # Advisory for now. The tree is clean under astyle 3.1 with tools/formatter.conf,
+    # but the runner image ships a newer astyle whose defaults differ slightly. Flip
+    # this to a blocking check once a run confirms the runner produces no diff.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install astyle
+        run: sudo apt-get update && sudo apt-get install -y astyle
+
+      - name: Check formatting
+        run: |
+          astyle --version
+          astyle --options=tools/formatter.conf --suffix=none prc/prc.ino
+          if ! git diff --exit-code -- prc/prc.ino; then
+            echo "::warning::astyle reformatted the sketch; run tools/format.sh and commit"
+            exit 1
+          fi

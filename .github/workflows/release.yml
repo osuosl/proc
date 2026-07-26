@@ -1,0 +1,132 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (must already exist)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  FQBN: arduino:avr:pro:cpu=8MHzatmega328
+  PLATFORM_VERSION: 1.8.8
+  ONEWIRE_VERSION: 2.3.8
+  ETHERNET3_VERSION: 1.6.0
+  MIN_FREE_FLASH: 512
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Derive version
+        id: ver
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          VERSION="${TAG#v}"
+          SHA="$(git rev-parse --short=7 HEAD)"
+          # This string is compiled into the image and shown in the telnet banner
+          # as "#Ver:PROC-V1-<git_ver>". The sha is included so a banner read off a
+          # deployed unit always maps to an exact commit, even if a tag is moved.
+          echo "tag=${TAG}"                    >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}"            >> "$GITHUB_OUTPUT"
+          echo "git_ver=${VERSION}-g${SHA}"    >> "$GITHUB_OUTPUT"
+
+      - uses: arduino/setup-arduino-cli@v2.0.0
+
+      - name: Install pinned toolchain
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install "arduino:avr@${PLATFORM_VERSION}"
+          arduino-cli lib install "OneWire@${ONEWIRE_VERSION}"
+          arduino-cli lib install "Ethernet3@${ETHERNET3_VERSION}"
+          arduino-cli version > toolchain.txt
+          arduino-cli core list >> toolchain.txt
+          arduino-cli lib list  >> toolchain.txt
+
+      - name: Build release variants
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          build () {
+            local name="$1" extra="$2"
+            echo "::group::build ${name}"
+            arduino-cli compile \
+              --fqbn "${FQBN}" \
+              --build-property "build.extra_flags=${extra} -DGIT_VER=\"${{ steps.ver.outputs.git_ver }}\" -DBUILD_SET=\"${FQBN}\"" \
+              --output-dir "build-${name}" \
+              prc 2>&1 | tee "build-${name}.log"
+            read -r USED MAX < <(
+              sed -n 's/^Sketch uses \([0-9]*\) bytes .*Maximum is \([0-9]*\) bytes\.$/\1 \2/p' "build-${name}.log"
+            )
+            local FREE=$(( MAX - USED ))
+            echo "${name}: ${USED}/${MAX} used, ${FREE} free"
+            if [ "${FREE}" -lt "${MIN_FREE_FLASH}" ]; then
+              echo "::error::${name}: only ${FREE} bytes free, below ${MIN_FREE_FLASH}"
+              exit 1
+            fi
+            cp "build-${name}/prc.ino.hex" "dist/proc-v1-${{ steps.ver.outputs.version }}-${name}.hex"
+            cp "build-${name}/prc.ino.elf" "dist/proc-v1-${{ steps.ver.outputs.version }}-${name}.elf"
+            echo "${name}|${USED}|${MAX}|${FREE}" >> sizes.txt
+            echo "::endgroup::"
+          }
+          build stock ""
+          build pwm "-DPWM=5"
+          cp toolchain.txt dist/
+          ( cd dist && sha256sum ./*.hex ./*.elf > SHA256SUMS )
+
+      - name: Compose release notes
+        id: notes
+        run: |
+          {
+            echo "## PROC-V1 firmware ${{ steps.ver.outputs.tag }}"
+            echo ""
+            echo "Banner string on a flashed unit:"
+            echo ""
+            echo '```'
+            echo "#Ver:PROC-V1-${{ steps.ver.outputs.git_ver }}"
+            echo '```'
+            echo ""
+            echo "### Builds"
+            echo ""
+            echo "| variant | flash used | max | free |"
+            echo "|---|---:|---:|---:|"
+            while IFS='|' read -r n used max free; do
+              echo "| \`${n}\` | ${used} | ${max} | ${free} |"
+            done < sizes.txt
+            echo ""
+            echo "\`stock\` is the build to flash unless the board has the V1.1 PWM pad populated."
+            echo ""
+            echo "### Flashing"
+            echo ""
+            echo '```bash'
+            echo "sudo systemctl stop getty@ttyS0     # free the port if flashing from the managed host"
+            echo "avrdude -v -patmega328p -carduino -P/dev/ttyUSB0 -b57600 -D \\"
+            echo "  -Uflash:w:proc-v1-${{ steps.ver.outputs.version }}-stock.hex:i"
+            echo '```'
+            echo ""
+            echo "Power the board as the countdown reaches 1; the bootloader window is short."
+            echo "Requires the CONN3 \"Update\" jumper so DTR can pull /RESET."
+            echo ""
+            echo "Verify with \`SHA256SUMS\`. \`toolchain.txt\` records the exact core and"
+            echo "library versions used, since this image fills ~95% of flash and is"
+            echo "sensitive to toolchain drift."
+          } > notes.md
+          cat notes.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: softprops/action-gh-release@v3.0.2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          body_path: notes.md
+          files: dist/*
+          fail_on_unmatched_files: true
