@@ -390,6 +390,24 @@ the system tick:
 Read by inspection at `a8f458f`; items marked **verified by build** were
 reproduced with `arduino-cli`.
 
+> **These are tracked as GitHub issues** — <https://github.com/osuosl/proc/issues>.
+> This table keeps the analysis; the issues carry the state. Update both, or
+> delete the row here and let the issue own it.
+>
+> | Here | Issue | | Here | Issue |
+> |---|---|---|---|---|
+> | 0 | **fixed** — see §5.1 | | 8 | [#7](https://github.com/osuosl/proc/issues/7) |
+> | 1 | **fixed** | | 9 | [#8](https://github.com/osuosl/proc/issues/8) |
+> | 2 | [#1](https://github.com/osuosl/proc/issues/1) | | 10 | [#9](https://github.com/osuosl/proc/issues/9) |
+> | 3 | [#2](https://github.com/osuosl/proc/issues/2) | | 11 | [#10](https://github.com/osuosl/proc/issues/10) |
+> | 4 | [#3](https://github.com/osuosl/proc/issues/3) | | 12 | [#11](https://github.com/osuosl/proc/issues/11) |
+> | 5 | [#4](https://github.com/osuosl/proc/issues/4) | | 13 | [#12](https://github.com/osuosl/proc/issues/12) |
+> | 6 | [#5](https://github.com/osuosl/proc/issues/5) | | 14 | [#13](https://github.com/osuosl/proc/issues/13) |
+> | 7 | [#6](https://github.com/osuosl/proc/issues/6) | | 15 | [#14](https://github.com/osuosl/proc/issues/14) |
+>
+> Also filed, not in the table below:
+> [#15 — clear the 28 compiler warnings](https://github.com/osuosl/proc/issues/15).
+
 | # | Severity | Issue |
 |---|---|---|
 | 0 | **Critical — FIXED on this branch** | **The telnet server goes permanently deaf after abandoned sessions.** `new_link()` returned at line 269 whenever `server.available()` yielded no client — but Ethernet3's `EthernetServer::available()` only returns a socket that has **unread bytes waiting** (`EthernetServer.cpp:60`), and the pending-slot timeout handling lives *inside* the loop after that return. So three abandoned sessions (closed terminal, dropped tunnel) left all three `clientn[]` slots stuck in `proc == 1` with nothing ever reclaiming them, and every later connection was accepted by the W5500 but never given a slot: TCP connects, no `passwd:` prompt, silence until the client gives up. Contributing factors: `clientn[i].ms < millis()` breaks across the ~49-day rollover, and the W5500 accepts up to 7 connections while the firmware tracks 4, with no keepalive configured (`Sn_KPALVTR` is never written) so stale sockets survive indefinitely — a link flap does **not** clear them. See §5.1 |
