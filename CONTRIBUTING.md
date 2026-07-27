@@ -144,10 +144,18 @@ Dependabot opens a **single grouped PR** for GitHub Actions, weekly on Monday.
 One PR for all actions rather than one per action; if a major bump breaks
 something, CI says so on that PR.
 
-Its commits are prefixed `ci(deps):` so they satisfy the conventional-commit
-check, and bot authors are exempt from the sign-off requirement because
-Dependabot has no DCO option. They are *not* exempt from the format check — if
-that prefix is ever removed from `.github/dependabot.yml`, CI will catch it.
+Its commits are prefixed **`chore(deps):`**, which does three things:
+
+- **No release.** Only `feat`, `fix` and breaking changes bump a version, so
+  merging a Dependabot PR never mints a new firmware version on its own.
+- **No changelog noise.** `chore` is hidden, so action bumps stay out of release
+  notes read by someone deciding whether to reflash a board.
+- **It passes CI.** Without a conventional prefix every Dependabot PR would fail
+  the commit check.
+
+Bot authors are exempt from the sign-off requirement, because Dependabot has no
+DCO option. They are *not* exempt from the format check — if that prefix is ever
+removed from `.github/dependabot.yml`, CI will catch it.
 
 **⚠ The Arduino pins are not covered.** There is no Dependabot ecosystem for
 `arduino-cli`, so these, in `.github/workflows/*.yml`, have to be reviewed by
