@@ -1,0 +1,146 @@
+name: Release artifacts
+
+# release-please owns versioning: merging its release PR bumps version.txt and
+# CHANGELOG.md, tags vX.Y.Z, and publishes the GitHub Release. This workflow
+# reacts to that publication and attaches the firmware to it. It deliberately
+# does not create releases of its own -- two things creating the same release is
+# how you end up with a release that has notes but no binaries, or vice versa.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to rebuild and re-upload"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  FQBN: arduino:avr:pro:cpu=8MHzatmega328
+  PLATFORM_VERSION: 1.8.8
+  ONEWIRE_VERSION: 2.3.8
+  ETHERNET3_VERSION: 1.6.0
+  MIN_FREE_FLASH: 512
+
+jobs:
+  artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve tag
+        id: tag
+        run: |
+          TAG="${{ inputs.tag || github.event.release.tag_name }}"
+          echo "tag=${TAG}"          >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}"    >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Compose the version string
+        id: ver
+        run: |
+          SHA="$(git rev-parse --short=7 HEAD)"
+          # Compiled into the image and shown in the telnet banner as
+          # "#Ver:PROC-V1-<git_ver>". The sha is included so a banner read off a
+          # deployed board maps to an exact commit even if a tag is moved.
+          echo "git_ver=${{ steps.tag.outputs.version }}-g${SHA}" >> "$GITHUB_OUTPUT"
+
+      - uses: arduino/setup-arduino-cli@v2.0.0
+
+      - name: Install pinned toolchain
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install "arduino:avr@${PLATFORM_VERSION}"
+          arduino-cli lib install "OneWire@${ONEWIRE_VERSION}"
+          arduino-cli lib install "Ethernet3@${ETHERNET3_VERSION}"
+          { arduino-cli version; arduino-cli core list; arduino-cli lib list; } > toolchain.txt
+
+      - name: Build release variants
+        id: build
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          V="${{ steps.tag.outputs.version }}"
+          build () {
+            local name="$1" extra="$2"
+            echo "::group::build ${name}"
+            arduino-cli compile \
+              --fqbn "${FQBN}" \
+              --build-property "build.extra_flags=${extra} -DGIT_VER=\"${{ steps.ver.outputs.git_ver }}\" -DBUILD_SET=\"${FQBN}\"" \
+              --output-dir "build-${name}" \
+              prc 2>&1 | tee "build-${name}.log"
+            read -r USED MAX < <(
+              sed -n 's/^Sketch uses \([0-9]*\) bytes .*Maximum is \([0-9]*\) bytes\.$/\1 \2/p' "build-${name}.log"
+            )
+            local FREE=$(( MAX - USED ))
+            if [ "${FREE}" -lt "${MIN_FREE_FLASH}" ]; then
+              echo "::error::${name}: only ${FREE} bytes free, below ${MIN_FREE_FLASH}"
+              exit 1
+            fi
+            cp "build-${name}/prc.ino.hex" "dist/proc-v1-${V}-${name}.hex"
+            cp "build-${name}/prc.ino.elf" "dist/proc-v1-${V}-${name}.elf"
+            printf '| `%s` | %s | %s | %s |\n' "${name}" "${USED}" "${MAX}" "${FREE}" >> sizes.md
+            echo "::endgroup::"
+          }
+          build stock ""
+          build pwm "-DPWM=5"
+          cp toolchain.txt dist/
+          ( cd dist && sha256sum ./* > SHA256SUMS )
+
+      - name: Build summary
+        run: |
+          {
+            echo "### ${{ steps.tag.outputs.tag }} — \`PROC-V1-${{ steps.ver.outputs.git_ver }}\`"
+            echo ""
+            echo "| variant | flash used | max | free |"
+            echo "|---|---:|---:|---:|"
+            cat sizes.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attach artifacts to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ steps.tag.outputs.tag }}" dist/* --clobber
+
+      - name: Append build details to the release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Best effort: release-please wrote the changelog section, this adds the
+        # operational half. Never fail the release over formatting.
+        continue-on-error: true
+        run: |
+          BODY="$(gh release view "${{ steps.tag.outputs.tag }}" --json body --jq .body)"
+          {
+            printf '%s\n\n' "${BODY}"
+            echo "---"
+            echo ""
+            echo "### Firmware"
+            echo ""
+            echo "Banner string once flashed:"
+            echo ""
+            echo '```'
+            echo "#Ver:PROC-V1-${{ steps.ver.outputs.git_ver }}"
+            echo '```'
+            echo ""
+            echo "| variant | flash used | max | free |"
+            echo "|---|---:|---:|---:|"
+            cat sizes.md
+            echo ""
+            echo "Flash \`stock\` unless the board has the V1.1 PWM pad populated."
+            echo ""
+            echo '```bash'
+            echo "sudo systemctl stop getty@ttyS0     # if flashing from the managed host"
+            echo "avrdude -v -patmega328p -carduino -P/dev/ttyUSB0 -b57600 -D \\"
+            echo "  -Uflash:w:proc-v1-${{ steps.tag.outputs.version }}-stock.hex:i"
+            echo '```'
+            echo ""
+            echo "Power the board as the countdown reaches 1; the bootloader window is"
+            echo "short. Requires the CONN3 \"Update\" jumper so DTR can pull /RESET."
+            echo "Verify against \`SHA256SUMS\`; \`toolchain.txt\` records the exact core"
+            echo "and library versions, which matters for an image this close to full."
+          } > notes.md
+          gh release edit "${{ steps.tag.outputs.tag }}" --notes-file notes.md
